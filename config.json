@@ -42,9 +42,9 @@
                "بیت\u200cکوین", "بیتکوین", "بیت کوین", "تتر", "رمزارز",
                "ارز دیجیتال", "نوبیتکس", "کریپتو"],
     "up":   ["rise", "rises", "rising", "rose", "surg", "soar", "jump", "climb",
-             "gain", "rall", "hike", "record high", "افزایش", "صعود", "جهش"],
+             "gain", "rall", "hike", "record high", "افزایش", "صعود", "جهش", "lifts"],
     "down": ["fall", "falls", "falling", "fell", "drop", "plung", "slump", "weaken",
-             "tumbl", "declin", "slid", "sink", "crash", "record low", "کاهش", "سقوط", "ریزش"]
+             "tumbl", "declin", "slid", "slides", "sink", "crash", "record low", "کاهش", "سقوط", "ریزش"]
   },
   "buzzwords": ["surge", "plunge", "soar", "skyrocket", "crash", "collapse", "record",
                 "panic", "crisis", "sanctions", "shock", "all-time", "tumble", "spike",

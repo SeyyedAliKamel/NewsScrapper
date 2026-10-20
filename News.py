@@ -13,15 +13,257 @@ from email.utils import parsedate_to_datetime
 
 CONFIG_FILE = "config.json"
 OUTPUT_DIR = "output"
-BASE_COLUMNS = ["score", "relevant", "direction", "publisher", "title", "url",
-                "published", "relevancy", "source_score", "buzz", "matched",
-                "published_utc", "price_gap_min"]
+SHOW_MERGES = "--show-merges" in sys.argv
+
+BASE_COLUMNS = [
+    "score",
+    "base_score",
+    "relevant",
+    "repeat_type",
+    "publisher",
+    "title",
+    "url",
+    "relevancy",
+    "source_score",
+    "buzz",
+    "matched",
+    "direction",
+    "repeat",
+    "repeat_sources",
+    "also_reported_by",
+    "series_editions",
+    "published",
+    "published_utc",
+    "price_gap_min",
+]
 
 ATOM = "{http://www.w3.org/2005/Atom}"
 TAG_RE = re.compile(r"<[^>]+>")
-SUFFIX = r"(?:s|es|ها|های|ی|ای)?"
+SUFFIX = r"(?:s|es|ها|های|ی|ای)?"  # plurals / common Persian suffixes for whole-word mode
+MIN_DT = datetime.min.replace(tzinfo=timezone.utc)
+
+# ---------- duplicate-detection defaults (config "dedupe" block can tune/extend) ----------
+DEFAULT_DEDUPE = {
+    "similarity_threshold": 0.5,   # word-overlap needed to call two headlines the same news
+    "min_shared_words": 3,
+    "window_hours": 48,            # similar headlines must be published this close together
+    "boost_per_source": 0.05,      # score bonus per extra outlet (relevant news only)
+    "max_boost": 0.2,
+    "stopwords": [
+        "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "for", "with", "by",
+        "from", "as", "is", "are", "was", "were", "be", "been", "it", "its", "this", "that",
+        "these", "those", "after", "over", "amid", "says", "said", "say", "new", "news",
+        "latest", "update", "live", "report", "reports", "reported", "will", "has", "have",
+        "had", "not", "but", "than", "into", "about", "up", "down", "out", "who", "what",
+        "why", "how", "s", "t",
+        "از", "به", "در", "با", "که", "را", "این", "آن", "و", "برای", "تا", "بر", "هم",
+        "می", "شد", "شده", "است", "بود", "خواهد", "یک", "هر", "نیز", "اما", "یا", "پس",
+    ],
+    # canonical word -> word prefixes that should count as the same thing
+    "synonyms": {
+        "fall": ["fall", "fell", "drop", "plung", "plummet", "slump", "tumbl", "slid", "sink",
+                 "sank", "crash", "declin", "weaken", "slip", "کاهش", "سقوط", "ریزش", "افت"],
+        "rise": ["rise", "rising", "rose", "surg", "soar", "jump", "climb", "rall", "spik",
+                 "gain", "hike", "leap", "افزایش", "صعود", "جهش", "رشد"],
+        "usd": ["dollar", "usd", "greenback", "دلار"],
+        "rial": ["rial", "toman", "ریال", "تومان"],
+        "iran": ["iran", "tehran", "ایران", "تهران"],
+        "gold": ["gold", "bullion", "طلا"],
+        "coin": ["coin", "سکه"],
+        "crypto": ["crypto", "bitcoin", "btc", "tether", "usdt", "رمزارز", "تتر"],
+        "price": ["price", "rate", "قیمت", "نرخ"],
+    },
+}
+
+# ---------- text normalization ----------
+PERSIAN_FIX = str.maketrans({"ي": "ی", "ك": "ک", "ۀ": "ه", "ة": "ه",
+                             "\u200c": " ", "\u200f": None, "\u200e": None})
+DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+
+MONTHS = ("(?:january|february|march|april|may|june|july|august|september|october|november|"
+          "december|sept|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|"
+          "فروردین|اردیبهشت|خرداد|مرداد|شهریور|اسفند|بهمن|آبان|آذر|مهر|تیر|دی|"
+          "ژانویه|فوریه|مارس|آوریل|ژوئن|ژوئیه|اوت|سپتامبر|اکتبر|نوامبر|دسامبر)")
+DATE_RES = [
+    re.compile(rf"(?<!\w)\d{{1,2}}(?:st|nd|rd|th)?\s+{MONTHS}(?!\w)(?:\s+\d{{4}})?"),
+    re.compile(rf"(?<!\w){MONTHS}(?!\w)\s+\d{{1,2}}(?!\d)(?:st|nd|rd|th)?(?:\s+\d{{4}})?"),
+    re.compile(r"(?<!\w)\d{4}\s+\d{1,2}\s+\d{1,2}(?!\w)"),
+    re.compile(r"(?<!\w)\d{1,2}\s+\d{1,2}\s+\d{2,4}(?!\w)"),
+]
+RELATIVE_RE = re.compile(
+    r"(?<!\w)(?:today|tomorrow|yesterday|tonight|monday|tuesday|wednesday|thursday|friday|"
+    r"saturday|sunday|امروز|فردا|دیروز|سه شنبه|یکشنبه|دوشنبه|چهارشنبه|پنجشنبه|شنبه|جمعه)(?!\w)")
 
 
+def normalize(text):
+    text = (text or "").translate(PERSIAN_FIX).translate(DIGITS).lower()
+    text = re.sub(r"(?<=\d)[,٬](?=\d{3})", "", text)  # 1,000,000 -> 1000000
+    text = re.sub(r"[^\w\s]", " ", text)
+    return " ".join(text.split())
+
+
+def make_template(norm):
+    """Remove dates so daily editions of the same headline become identical."""
+    out, had_date = norm, False
+    for rx in DATE_RES + [RELATIVE_RE]:
+        out, n = rx.subn(" ", out)
+        had_date = had_date or n > 0
+    return " ".join(out.split()), had_date
+
+
+def stem(w):
+    if any(ch.isdigit() for ch in w):
+        return w
+    for suf in ("های", "ها"):
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            w = w[: -len(suf)]
+            break
+    return w[:5]  # crude stemmer: rise/rises/rising -> same 5-letter prefix
+
+
+def tokenize(text, stop, syn_pairs):
+    out = set()
+    for w in text.split():
+        if w in stop or (len(w) < 2 and not w.isdigit()):
+            continue
+        mapped = next((c for prefix, c in syn_pairs if w.startswith(prefix)), None)
+        out.add(mapped if mapped else stem(w))
+    return out
+
+
+def newest(members):
+    return max((m["dt"] or MIN_DT) for m in members)
+
+
+def within_window(a, b, hours):
+    if a is None or b is None:
+        return True
+    return abs((a - b).total_seconds()) <= hours * 3600
+
+
+def dedupe(items, d):
+    """Collapse exact copies, daily series and same-news-different-wording.
+    Returns (result rows, notes for --show-merges)."""
+    if not items:
+        return [], []
+    notes = []
+    stop = {normalize(w) for w in d["stopwords"]}
+    syn_pairs = sorted(
+        ((normalize(p), canon) for canon, prefixes in d["synonyms"].items() for p in prefixes),
+        key=lambda x: -len(x[0]),
+    )
+
+    for it in items:
+        it["norm"] = normalize(it["title"])
+        it["template"], it["had_date"] = make_template(it["norm"])
+        it["tokens"] = tokenize(it["template"], stop, syn_pairs)
+
+    # Type 1: exact titles
+    groups = {}
+    for it in items:
+        groups.setdefault(it["norm"] or it["url"], []).append(it)
+
+    # Type 3: daily series (same headline, only the date differs) -> keep newest edition
+    by_template = {}
+    for key, members in groups.items():
+        t = members[0]["template"]
+        if len(t.split()) >= 3 and members[0]["had_date"]:
+            by_template.setdefault(t, []).append(key)
+    stale, editions = set(), {}
+    for keys in by_template.values():
+        if len(keys) < 2:
+            continue
+        keys.sort(key=lambda k: newest(groups[k]), reverse=True)
+        editions[keys[0]] = len(keys)
+        stale.update(keys[1:])
+        notes.append(f"[series] {len(keys)} editions collapsed, kept: {groups[keys[0]][0]['title']}")
+
+    nodes = []
+    for key, members in groups.items():
+        if key in stale:
+            continue
+        rep = max(members, key=lambda m: (m["score"], m["source_score"]))
+        nodes.append({"items": members, "rep": rep, "editions": editions.get(key, 0)})
+
+    # Type 2: similar wording, same news (word-overlap + time window)
+    n = len(nodes)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        ti = nodes[i]["rep"]["tokens"]
+        if not ti:
+            continue
+        for j in range(i + 1, n):
+            tj = nodes[j]["rep"]["tokens"]
+            if not tj:
+                continue
+            if not within_window(nodes[i]["rep"]["dt"], nodes[j]["rep"]["dt"], d["window_hours"]):
+                continue
+            shared = len(ti & tj)
+            if shared < d["min_shared_words"]:
+                continue
+            if shared / len(ti | tj) >= d["similarity_threshold"]:
+                parent[find(j)] = find(i)
+
+    clusters = {}
+    for i in range(n):
+        clusters.setdefault(find(i), []).append(i)
+
+    results = []
+    for idxs in clusters.values():
+        cnodes = [nodes[i] for i in idxs]
+        all_items = [it for nd in cnodes for it in nd["items"]]
+        best = max(all_items, key=lambda m: (m["score"], m["source_score"]))
+        best_pub = best["publisher"].strip().lower()
+        pubs = {m["publisher"].strip().lower() for m in all_items}
+        also = sorted({m["publisher"] for m in all_items
+                       if m["publisher"].strip().lower() != best_pub})
+
+        copies = len(all_items)
+        if len(cnodes) > 1:
+            rtype = "similar"
+            titles = sorted({m["title"] for m in all_items})
+            notes.append("[similar] " + str(len(titles)) + " titles merged:\n    - "
+                         + "\n    - ".join(titles))
+        elif copies > 1:
+            rtype = "exact"
+        else:
+            rtype = ""
+
+        boost = 0.0
+        if best["relevant"] == "yes" and len(pubs) > 1:
+            boost = min(d["boost_per_source"] * (len(pubs) - 1), d["max_boost"])
+
+        results.append({
+            "score": round(min(1.0, best["score"] + boost), 3),
+            "base_score": best["score"],
+            "relevant": best["relevant"],
+            "direction": best["direction"],
+            "publisher": best["publisher"],
+            "title": best["title"],
+            "url": best["url"],
+            "published": best["published"],
+            "relevancy": best["relevancy"],
+            "source_score": best["source_score"],
+            "buzz": best["buzz"],
+            "matched": best["matched"],
+            "repeat": copies,
+            "repeat_sources": len(pubs),
+            "repeat_type": rtype,
+            "series_editions": max(nd["editions"] for nd in cnodes) or "",
+            "also_reported_by": " | ".join(also),
+            "dt": best["dt"],
+        })
+    return results, notes
+
+
+# ---------- config / fetching / parsing ----------
 def load_config(path=CONFIG_FILE):
     try:
         with open(path, encoding="utf-8") as f:
@@ -44,10 +286,22 @@ def load_config(path=CONFIG_FILE):
     cfg.setdefault("prices", {})
     for k in ("iran", "asset", "crypto", "up", "down"):
         cfg["topic"].setdefault(k, [])
+
+    # dedupe settings: numbers override defaults; stopwords/synonyms are ADDED to defaults
+    user = cfg.get("dedupe", {})
+    d = dict(DEFAULT_DEDUPE)
+    d.update({k: v for k, v in user.items() if k not in ("stopwords", "synonyms")})
+    d["stopwords"] = DEFAULT_DEDUPE["stopwords"] + user.get("stopwords", [])
+    syn = {k: list(v) for k, v in DEFAULT_DEDUPE["synonyms"].items()}
+    for canon, words in user.get("synonyms", {}).items():
+        syn.setdefault(canon, []).extend(words)
+    d["synonyms"] = syn
+    cfg["dedupe"] = d
     return cfg
 
 
 def fetch(url):
+    # percent-encode any non-ASCII characters (e.g. Persian) but keep existing %XX
     url = urllib.parse.quote(url, safe=":/?&=+%@,;")
     req = urllib.request.Request(url, headers={"User-Agent": "NewsScrapper/0.1"})
     with urllib.request.urlopen(req, timeout=15) as r:
@@ -67,7 +321,7 @@ def parse(xml_bytes):
             "link": (item.findtext("link") or "").strip(),
             "published": item.findtext("pubDate") or "",
             "summary": clean(item.findtext("description")),
-            "publisher": clean(item.findtext("source")),
+            "publisher": clean(item.findtext("source")),  # set by Google News feeds
         }
     for entry in root.iter(ATOM + "entry"):
         link = entry.find(ATOM + "link")
@@ -112,8 +366,7 @@ def load_prices(path):
 
 
 def nearest_price(when, times, rows, max_gap_min):
-    """Snapshot closest to 'when', or (None, None) if none within max_gap_min.
-    Gap is in minutes: negative = snapshot taken before the article."""
+    """Snapshot closest to 'when', or (None, None) if none within max_gap_min."""
     if when is None or not times:
         return None, None
     i = bisect.bisect_left(times, when)
@@ -125,6 +378,7 @@ def nearest_price(when, times, rows, max_gap_min):
     return rows[j], round(gap, 1)
 
 
+# ---------- scoring ----------
 def find_hits(text, terms, whole=False):
     """Return the terms found in text.
     whole=True : term must be a complete word (plus a few suffixes)
@@ -150,6 +404,7 @@ def score_article(art, feed_name, iran_local, cfg):
     asset_hits = find_hits(blob, asset_terms, whole=True)
     asset_in_title = bool(find_hits(title, asset_terms, whole=True))
 
+    # Relevant = Iran context AND (money term in title OR two+ different money terms)
     relevant = has_iran and (asset_in_title or len(asset_hits) >= 2)
 
     up = len(find_hits(blob, topic["up"]))
@@ -198,8 +453,9 @@ def score_article(art, feed_name, iran_local, cfg):
     }
 
 
+# ---------- main ----------
 def main():
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Persian-safe on Windows
     cfg = load_config()
 
     prices_cfg = cfg["prices"]
@@ -207,12 +463,11 @@ def main():
     price_file = prices_cfg.get("file", "output/prices.csv")
     max_gap = prices_cfg.get("max_gap_minutes", 30)
     snap_times, snap_rows = load_prices(price_file)
-    if not snap_times:
+    if price_cols and not snap_times:
         print(f"[i] No price snapshots in '{price_file}' yet; price columns will be blank.")
 
-    seen = set()
-    rows = []
-    with_price = 0
+    seen_urls = set()
+    items = []
 
     for feed_name, spec in cfg["feeds"].items():
         if isinstance(spec, str):
@@ -225,32 +480,42 @@ def main():
 
         for art in articles:
             link = art["link"]
-            if not link or link in seen:
+            if not link or link in seen_urls:
                 continue
-            seen.add(link)
+            seen_urls.add(link)
 
+            # Google News appends " - Publisher" to titles; strip it
             suffix = f" - {art['publisher']}"
             if art["publisher"] and art["title"].endswith(suffix):
                 art["title"] = art["title"][: -len(suffix)]
 
             s = score_article(art, feed_name, spec.get("iran_local", False), cfg)
-            if s["score"] < cfg["min_score"]:
-                continue
+            items.append({
+                **s,
+                "publisher": art["publisher"] or feed_name,
+                "title": art["title"],
+                "url": link,
+                "published": art["published"],
+                "dt": parse_time(art["published"]),
+            })
 
-            published_dt = parse_time(art["published"])
-            snap, gap = nearest_price(published_dt, snap_times, snap_rows, max_gap)
-            if snap:
-                with_price += 1
+    results, notes = dedupe(items, cfg["dedupe"])
 
-            rows.append([
-                s["score"], s["relevant"], s["direction"], art["publisher"] or feed_name,
-                art["title"], link, art["published"],
-                s["relevancy"], s["source_score"], s["buzz"], s["matched"],
-                published_dt.isoformat(timespec="seconds") if published_dt else "",
-                gap if gap is not None else "",
-            ] + [snap.get(c, "") if snap else "" for c in price_cols])
+    rows, with_price = [], 0
+    for r in results:
+        if r["score"] < cfg["min_score"]:
+            continue
+        snap, gap = nearest_price(r["dt"], snap_times, snap_rows, max_gap)
+        if snap:
+            with_price += 1
+        row = dict(r)
+        row["published_utc"] = r["dt"].isoformat(timespec="seconds") if r["dt"] else ""
+        row["price_gap_min"] = gap if gap is not None else ""
+        for c in price_cols:
+            row[c] = snap.get(c, "") if snap else ""
+        rows.append(row)
 
-    rows.sort(key=lambda r: r[0], reverse=True)
+    rows.sort(key=lambda r: r["score"], reverse=True)  # best score first
 
     if not rows:
         print("No articles found.")
@@ -260,13 +525,23 @@ def main():
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     path = os.path.join(OUTPUT_DIR, f"news_{stamp}.csv")
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(BASE_COLUMNS + price_cols)
+        writer = csv.DictWriter(f, fieldnames=BASE_COLUMNS + price_cols, extrasaction="ignore")
+        writer.writeheader()
         writer.writerows(rows)
 
     for r in rows[:15]:
-        print(f"{r[0]:.2f} [{r[1]:3}|{r[2] or '-':5}] {r[3]}: {r[4]}")
-    print(f"\n{len(rows)} articles saved to {path} ({with_price} matched a price snapshot)")
+        tag = f" x{r['repeat']}" if r["repeat"] > 1 else ""
+        print(f"{r['score']:.2f}{tag} [{r['relevant']:3}|{r['direction'] or '-':5}] "
+              f"{r['publisher']}: {r['title']}")
+
+    if SHOW_MERGES and notes:
+        print("\n--- merges ---")
+        for note in notes:
+            print(note)
+
+    print(f"\n{len(rows)} rows (from {len(items)} articles) saved to {path}")
+    if price_cols:
+        print(f"{with_price} matched a price snapshot")
 
 
 if __name__ == "__main__":
