@@ -1,4 +1,21 @@
 {
+  "market": { "symbol": "FAKE", "resolution": "15", "fetch": false },
+  "horizons_hours": [
+    1,
+    6,
+    24
+  ],
+  "flat_pct": 0.1,
+  "scrape_delay": 1.5,
+  "predict": {
+    "min_similarity": 0.25,
+    "k": 8,
+    "min_matches": 3,
+    "cluster_similarity": 0.6,
+    "title_weight": 3,
+    "body_chars": 3000,
+    "use_scores": true
+  },
   "feeds": {
     "GN: rial dollar": "https://news.google.com/rss/search?q=Iran+rial+dollar+when:7d&hl=en-US&gl=US&ceid=US:en",
     "GN: gold coin": "https://news.google.com/rss/search?q=Iran+gold+coin+price+when:7d&hl=en-US&gl=US&ceid=US:en",
@@ -6,11 +23,26 @@
     "GN: Tehran currency": "https://news.google.com/rss/search?q=Tehran+currency+market+when:7d&hl=en-US&gl=US&ceid=US:en",
     "GN: Iran crypto": "https://news.google.com/rss/search?q=Iran+crypto+bitcoin+when:7d&hl=en-US&gl=US&ceid=US:en",
     "GN: Nobitex tether": "https://news.google.com/rss/search?q=Nobitex+OR+Tether+Iran+when:7d&hl=en-US&gl=US&ceid=US:en",
-    "Tehran Times": {"url": "https://www.tehrantimes.com/rss", "iran_local": true},
-    "BBC Persian": {"url": "https://feeds.bbci.co.uk/persian/rss.xml", "iran_local": true},
+    "Tehran Times": {
+      "url": "https://www.tehrantimes.com/rss",
+      "iran_local": true
+    },
+    "BBC Persian": {
+      "url": "https://feeds.bbci.co.uk/persian/rss.xml",
+      "iran_local": true
+    },
     "BBC World": "http://feeds.bbci.co.uk/news/world/rss.xml",
     "Guardian": "https://www.theguardian.com/world/rss",
     "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml"
+  },
+  "date_feeds": {
+    "GN rial dollar": "https://news.google.com/rss/search?q=Iran+rial+dollar+after:{after}+before:{before}&hl=en-US&gl=US&ceid=US:en",
+    "GN gold coin": "https://news.google.com/rss/search?q=Iran+gold+coin+price+after:{after}+before:{before}&hl=en-US&gl=US&ceid=US:en",
+    "GN crypto": "https://news.google.com/rss/search?q=Iran+crypto+OR+Nobitex+OR+Tether+after:{after}+before:{before}&hl=en-US&gl=US&ceid=US:en",
+    "GN fa": {
+      "url": "https://news.google.com/rss/search?q=دلار+OR+تتر+OR+سکه+after:{after}+before:{before}&hl=fa&gl=IR&ceid=IR:fa",
+      "iran_local": true
+    }
   },
   "source_trust": {
     "reuters": 1.0,
@@ -33,37 +65,138 @@
   },
   "default_trust": 0.3,
   "topic": {
-    "iran": ["iran", "iranian", "tehran", "toman", "ایران", "تهران", "تومان"],
-    "asset": ["dollar", "usd", "rial", "exchange rate", "currency", "forex",
-              "gold", "coin", "bahar azadi", "sekkeh", "bonbast",
-              "دلار", "طلا", "سکه", "ریال", "Bank", "بانک مرکزی"],
-    "crypto": ["bitcoin", "btc", "ethereum", "crypto", "cryptocurrency", "stablecoin",
-               "tether", "usdt", "nobitex", "binance", "digital currency",
-               "بیت\u200cکوین", "بیتکوین", "بیت کوین", "تتر", "رمزارز",
-               "ارز دیجیتال", "نوبیتکس", "کریپتو"],
-    "up":   ["rise", "rises", "rising", "rose", "surg", "soar", "jump", "climb",
-             "gain", "rall", "hike", "record high", "افزایش", "صعود", "جهش", "lifts"],
-    "down": ["fall", "falls", "falling", "fell", "drop", "plung", "slump", "weaken",
-             "tumbl", "declin", "slid", "slides", "sink", "crash", "record low", "کاهش", "سقوط", "ریزش"]
+    "iran": [
+      "iran",
+      "iranian",
+      "tehran",
+      "toman",
+      "ایران",
+      "تهران",
+      "تومان"
+    ],
+    "asset": [
+      "dollar",
+      "usd",
+      "rial",
+      "exchange rate",
+      "currency",
+      "forex",
+      "gold",
+      "coin",
+      "bahar azadi",
+      "sekkeh",
+      "bonbast",
+      "دلار",
+      "طلا",
+      "سکه",
+      "ریال",
+      "Bank",
+      "بانک مرکزی"
+    ],
+    "crypto": [
+      "bitcoin",
+      "btc",
+      "ethereum",
+      "crypto",
+      "cryptocurrency",
+      "stablecoin",
+      "tether",
+      "usdt",
+      "nobitex",
+      "binance",
+      "digital currency",
+      "بیت‌کوین",
+      "بیتکوین",
+      "بیت کوین",
+      "تتر",
+      "رمزارز",
+      "ارز دیجیتال",
+      "نوبیتکس",
+      "کریپتو"
+    ],
+    "up": [
+      "rise",
+      "rises",
+      "rising",
+      "rose",
+      "surg",
+      "soar",
+      "jump",
+      "climb",
+      "gain",
+      "rall",
+      "hike",
+      "record high",
+      "افزایش",
+      "صعود",
+      "جهش",
+      "lifts"
+    ],
+    "down": [
+      "fall",
+      "falls",
+      "falling",
+      "fell",
+      "drop",
+      "plung",
+      "slump",
+      "weaken",
+      "tumbl",
+      "declin",
+      "slid",
+      "slides",
+      "sink",
+      "crash",
+      "record low",
+      "کاهش",
+      "سقوط",
+      "ریزش"
+    ]
   },
-  "buzzwords": ["surge", "plunge", "soar", "skyrocket", "crash", "collapse", "record",
-                "panic", "crisis", "sanctions", "shock", "all-time", "tumble", "spike",
-                "free fall", "historic", "hack", "crackdown"],
-  "weights": {"relevancy": 0.5, "source": 0.3, "buzz": 0.2},
+  "buzzwords": [
+    "surge",
+    "plunge",
+    "soar",
+    "skyrocket",
+    "crash",
+    "collapse",
+    "record",
+    "panic",
+    "crisis",
+    "sanctions",
+    "shock",
+    "all-time",
+    "tumble",
+    "spike",
+    "free fall",
+    "historic",
+    "hack",
+    "crackdown"
+  ],
+  "weights": {
+    "relevancy": 0.5,
+    "source": 0.3,
+    "buzz": 0.2
+  },
   "irrelevant_penalty": 0.4,
   "min_score": 0,
+  "dedupe": {
+    "window_hours": 48,
+    "boost_per_source": 0.05,
+    "max_boost": 0.2
+  },
   "prices": {
-    "file": "output/prices.csv",
-    "max_gap_minutes": 30,
     "request": {
-    "method": "GET",
-    "url": "https://api.bitpin.ir/api/v1/mkt/tickers/"
+      "url": "https://apiv2.nobitex.ir/market/stats?srcCurrency=btc&dstCurrency=usdt",
+      "method": "GET"
     },
+    "file": "output/prices.csv",
     "fields": {
-      "usd_sell": "usd1",
-      "usd_buy": "usd2",
-      "gold_coin": "FILL_AFTER_PROBE",
-      "gold_gram18": "FILL_AFTER_PROBE"
+      "latest": "stats.btc-usdt.latest",
+      "best_buy": "stats.btc-usdt.bestBuy",
+      "best_sell": "stats.btc-usdt.bestSell",
+      "day_high": "stats.btc-usdt.dayHigh",
+      "day_low": "stats.btc-usdt.dayLow"
     }
   }
 }
