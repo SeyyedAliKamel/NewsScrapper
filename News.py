@@ -10,6 +10,7 @@
   python News.py export [--show-merges]                           scored + labeled data -> output/news_labeled.csv
   python News.py update                                           collect + bodies + label + predict
   python News.py probe                                            show the raw price-candle response
+  python News.py doctor                                           diagnose database row counts and pipeline status
   python News.py import-candles FILE.csv                          use your own price file instead of the API
   python News.py ui [--port 8765]                                 local web UI in your browser
   python News.py fake-prices                                      TEST ONLY: random prices stored as symbol 'FAKE'
@@ -18,7 +19,7 @@ import argparse
 import sys
 from datetime import datetime
 
-from analysis import backtest, export, predict, top
+from analysis import backtest, doctor, export, predict, top
 from common import load_config, open_db, rescore
 from data import (collect, fake_prices, import_candles, label, probe,
                   scrape_bodies)
@@ -55,7 +56,7 @@ def main():
     ex.add_argument("--show-merges", action="store_true")
     ui = sub.add_parser("ui")
     ui.add_argument("--port", type=int, default=8765)
-    for name in ("update", "probe"):
+    for name in ("update", "probe", "doctor"):
         sub.add_parser(name)
     a = ap.parse_args()
 
@@ -78,6 +79,8 @@ def main():
         label(db, cfg)
     elif a.cmd == "rescore":
         rescore(db, cfg)
+    elif a.cmd == "doctor":
+        doctor(db, cfg)
     elif a.cmd == "fake-prices":
         fake_prices(db, cfg)
     elif a.cmd == "import-candles":

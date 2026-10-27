@@ -1,11 +1,11 @@
-"""Using the data: similarity, prediction, backtest, top list, CSV export."""
+"""Using the data: similarity, prediction, backtest, top list, CSV export, doctor."""
 import csv
 import math
 import os
 import time
 from collections import Counter, defaultdict
 
-from common import EXPORT_FILE, all_rows, day, load_outcomes, tokens
+from common import EXPORT_FILE, DB_FILE, all_rows, day, load_outcomes, tokens
 from data import warn_fake
 
 
@@ -275,3 +275,44 @@ def export(db, cfg, show_merges=False):
         print("\n--- merges ---")
         print("\n".join(notes))
 
+
+# ---------------------------------------------------------------------- doctor
+
+def doctor(db, cfg):
+    """Diagnose data counts, market configuration, and pipeline status."""
+    m = cfg["market"]
+    sym, res = m.get("symbol", ""), str(m.get("resolution", ""))
+    
+    art_count = db.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    rel_count = db.execute("SELECT COUNT(*) FROM articles WHERE relevant=1").fetchone()[0]
+    body_count = db.execute("SELECT COUNT(*) FROM articles WHERE body_status='ok'").fetchone()[0]
+    out_count = db.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0]
+    candle_count = db.execute("SELECT COUNT(*) FROM candles WHERE symbol=? AND res=?", (sym, res)).fetchone()[0]
+    
+    min_ts, max_ts = db.execute("SELECT MIN(ts), MAX(ts) FROM articles WHERE relevant=1 AND ts IS NOT NULL").fetchone()
+    c_min, c_max = db.execute("SELECT MIN(ts), MAX(ts) FROM candles WHERE symbol=? AND res=?", (sym, res)).fetchone()
+
+    print(f"=== Database Diagnostic ({DB_FILE}) ===")
+    print(f"Articles:          {art_count} total ({rel_count} relevant, {body_count} with bodies)")
+    print(f"Market Config:     Symbol={sym}, Resolution={res}, Fetch={m.get('fetch', True)}")
+    print(f"Candles ({sym}):   {candle_count} candles stored")
+    print(f"Labeled Outcomes:  {out_count}")
+
+    print("\n--- Pipeline Status ---")
+    if art_count == 0:
+        print("[!] No articles stored. Run `python News.py collect`.")
+    elif rel_count == 0:
+        print("[!] Articles exist, but 0 are marked relevant. Verify `topic.iran` and `topic.asset`/`topic.crypto` in config.json, then run `python News.py rescore`.")
+    elif candle_count == 0:
+        print(f"[!] No candles found for symbol '{sym}' (resolution {res}). If using Nobitex API, check connection via `python News.py probe`. If using CSV, run `python News.py import-candles <file.csv>`.")
+    elif out_count == 0:
+        print("[!] Articles and candles exist, but 0 outcomes are labeled.")
+        if min_ts and c_min and c_max:
+            print(f"    Relevant articles span: {day(min_ts)} to {day(max_ts)}")
+            print(f"    Stored candles span:    {day(c_min)} to {day(c_max)}")
+            if max_ts < c_min or min_ts > c_max:
+                print("    --> Date mismatch: candle dates and article dates do not overlap. Run `python News.py label` to fetch or align candles.")
+        else:
+            print("    Run `python News.py label`.")
+    else:
+        print("[✓] Pipeline healthy! Ready for `predict`, `backtest`, and `top`.")

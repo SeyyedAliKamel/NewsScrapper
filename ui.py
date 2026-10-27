@@ -10,7 +10,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from analysis import annotate, backtest, export, predict, top
+from analysis import annotate, backtest, doctor, export, predict, top
 from common import all_rows, load_config, load_outcomes, open_db, rescore
 from data import collect, label, scrape_bodies
 
@@ -39,6 +39,8 @@ def _dispatch(name, db, cfg, a):
         predict(db, cfg, float(a.get("hours", 24)))
     elif name == "backtest":
         backtest(db, cfg)
+    elif name == "doctor":
+        doctor(db, cfg)
     elif name == "update":
         collect(db, cfg)
         scrape_bodies(db, cfg, 40)
@@ -106,6 +108,20 @@ def api_top(q):
     return res
 
 
+def api_candles(q):
+    hours = float(q.get("hours", ["72"])[0])
+    cfg, db = load_config(), open_db()
+    m = cfg["market"]
+    sym, res = m["symbol"], m["resolution"]
+    now = time.time()
+    t_min = (now - hours * 3600) if hours > 0 else 0
+    rows = db.execute(
+        "SELECT ts, o, c FROM candles WHERE symbol=? AND res=? AND ts >= ? ORDER BY ts ASC",
+        (sym, res, int(t_min))
+    ).fetchall()
+    return [{"ts": r["ts"], "open": r["o"], "close": r["c"]} for r in rows]
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -132,6 +148,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps(api_stats()))
             if u.path == "/api/top":
                 return self._send(200, json.dumps(api_top(parse_qs(u.query))))
+            if u.path == "/api/candles":
+                return self._send(200, json.dumps(api_candles(parse_qs(u.query))))
             self._send(404, "not found", "text/plain")
         except SystemExit as e:
             self._send(500, str(e.code), "text/plain")
@@ -210,6 +228,7 @@ white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Consolas,m
 <header><h1>News → price tracker</h1><div id="stats">loading…</div></header>
 <nav id="nav">
 <button data-t="stories" class="on">Stories</button>
+<button data-t="market">Market &amp; Prices</button>
 <button data-t="analysis">Predict &amp; backtest</button>
 <button data-t="data">Update data</button>
 </nav>
@@ -223,6 +242,22 @@ white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Consolas,m
   <button class="act" id="reload">Refresh</button>
  </div>
  <div id="list"></div>
+</section>
+<section id="market" class="tab">
+ <div class="bar">
+  <label>Candle Window <select id="mhours">
+   <option value="24">24 h</option>
+   <option value="72" selected>3 days</option>
+   <option value="168">7 days</option>
+   <option value="0">All</option>
+  </select></label>
+  <button class="act" id="reload-candles">Refresh Prices</button>
+ </div>
+ <div id="market-stats" class="hint">Loading candles…</div>
+ <div class="story" style="overflow-x:auto;">
+  <svg id="candle-chart" width="1000" height="260" style="display:block;width:100%;"></svg>
+ </div>
+ <div id="candle-table-box" style="margin-top:14px;max-height:350px;overflow-y:auto;"></div>
 </section>
 <section id="analysis" class="tab">
  <div class="bar">
@@ -245,6 +280,7 @@ white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Consolas,m
   <button class="act" data-run="bodies">Scrape bodies</button>
   <button class="act" data-run="label">Label with prices</button>
   <button class="act" data-run="rescore">Rescore</button>
+  <button class="act" data-run="doctor">Doctor</button>
   <button class="act" data-run="export">Export CSV</button></div></div>
  <pre id="out-data">Output appears here.</pre>
 </section>
@@ -259,7 +295,9 @@ function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className
 
 $$('#nav button').forEach(b=>b.onclick=()=>{
  $$('#nav button').forEach(x=>x.classList.toggle('on',x===b));
- $$('.tab').forEach(t=>t.classList.toggle('on',t.id===b.dataset.t));});
+ $$('.tab').forEach(t=>t.classList.toggle('on',t.id===b.dataset.t));
+ if(b.dataset.t==='market') loadCandles();
+});
 
 async function loadStats(){
  try{const s=await api('/api/stats');HORIZONS=s.horizons;
@@ -298,6 +336,82 @@ async function loadStories(){
  try{STORIES=await api('/api/top?hours='+$('#hours').value);render();}
  catch(e){$('#list').replaceChildren(el('div','empty','Error: '+e.message));}}
 
+async function loadCandles(){
+ const h=$('#mhours').value;
+ $('#market-stats').textContent='Loading candles…';
+ try{
+  const data=await api('/api/candles?hours='+h);
+  if(!data.length){
+   $('#market-stats').textContent='No price candles stored for this timeframe.';
+   $('#candle-chart').replaceChildren();
+   $('#candle-table-box').replaceChildren();
+   return;
+  }
+  const first=data[0], last=data[data.length-1];
+  const pct=(((last.close-first.open)/first.open)*100).toFixed(2);
+  $('#market-stats').textContent=
+   `Showing ${data.length} candles | Latest: ${last.close.toLocaleString()} | Window Change: ${pct>0?'+':''}${pct}%`;
+  renderChart(data);
+  renderTable(data);
+ }catch(e){
+  $('#market-stats').textContent='Error loading candles: '+e.message;
+ }
+}
+
+function renderChart(data){
+ const svg=$('#candle-chart');
+ svg.replaceChildren();
+ const w=svg.clientWidth||1000, h=260, pad=30;
+ const minP=Math.min(...data.map(d=>Math.min(d.open,d.close)));
+ const maxP=Math.max(...data.map(d=>Math.max(d.open,d.close)))||1;
+ const range=(maxP-minP)||1;
+
+ const getY=p=>h-pad-((p-minP)/range)*(h-2*pad);
+ const step=(w-2*pad)/data.length;
+
+ const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+ line.setAttribute('x1',pad); line.setAttribute('y1',h-pad);
+ line.setAttribute('x2',w-pad); line.setAttribute('y2',h-pad);
+ line.setAttribute('stroke','var(--line)');
+ svg.appendChild(line);
+
+ data.forEach((d,idx)=>{
+  const x=pad+idx*step;
+  const yO=getY(d.open), yC=getY(d.close);
+  const isUp=d.close>=d.open;
+  const color=isUp?'var(--up)':'var(--dn)';
+
+  const bar=document.createElementNS('http://www.w3.org/2000/svg','rect');
+  bar.setAttribute('x',x);
+  bar.setAttribute('y',Math.min(yO,yC));
+  bar.setAttribute('width',Math.max(1,step-2));
+  bar.setAttribute('height',Math.max(2,Math.abs(yC-yO)));
+  bar.setAttribute('fill',color);
+  svg.appendChild(bar);
+ });
+}
+
+function renderTable(data){
+ const box=$('#candle-table-box');
+ const rows=[...data].reverse().slice(0,50);
+ let html='<table style="width:100%;border-collapse:collapse;font-size:13px;text-align:left;">'+
+  '<thead><tr style="border-bottom:1px solid var(--line);color:var(--mut);">'+
+  '<th style="padding:6px">UTC Date</th><th>Open</th><th>Close</th><th>Delta</th></tr></thead><tbody>';
+ for(const r of rows){
+  const d=new Date(r.ts*1000).toISOString().replace('T',' ').slice(0,16);
+  const delta=(((r.close-r.open)/r.open)*100).toFixed(2);
+  const clr=delta>0?'var(--up)':(delta<0?'var(--dn)':'var(--fl)');
+  html+=`<tr style="border-bottom:1px solid var(--line);">
+   <td style="padding:6px">${d}</td>
+   <td>${r.open.toLocaleString()}</td>
+   <td>${r.close.toLocaleString()}</td>
+   <td style="color:${clr}">${delta>0?'+':''}${delta}%</td>
+  </tr>`;
+ }
+ html+='</tbody></table>';
+ box.innerHTML=html;
+}
+
 async function run(cmd,args,outId){
  const out=$('#'+outId),btns=$$('button.act');
  btns.forEach(b=>b.disabled=true);out.textContent='Running '+cmd+'… (can take a while)';
@@ -305,7 +419,7 @@ async function run(cmd,args,outId){
    headers:{'Content-Type':'application/json','X-UI':'1'},body:JSON.stringify({cmd,args})});
   out.textContent=r.output;}
  catch(e){out.textContent='Error: '+e.message;}
- btns.forEach(b=>b.disabled=false);loadStats();loadStories();}
+ btns.forEach(b=>b.disabled=false);loadStats();loadStories();loadCandles();}
 
 $$('[data-run]').forEach(b=>b.onclick=()=>{
  const cmd=b.dataset.run,inAnalysis=!!b.closest('#analysis');
@@ -314,8 +428,10 @@ $('#backfill').onclick=()=>{const s=$('#d0').value,e=$('#d1').value;
  if(!s){$('#out-data').textContent='Pick a start date.';return;}
  run('collect',{start:s,end:e||s},'out-data');};
 $('#hours').onchange=$('#reload').onclick=loadStories;
+$('#mhours').onchange=$('#reload-candles').onclick=loadCandles;
 $('#relonly').onchange=$('#q').oninput=render;
-loadStats();loadStories();
+
+loadStats();loadStories();loadCandles();
 </script></body></html>
 """
 
