@@ -21,7 +21,7 @@ from datetime import datetime
 
 from analysis import backtest, doctor, export, predict, top
 from common import load_config, open_db, rescore
-from data import (collect, fake_prices, import_candles, label, probe,
+from data import (collect, fake_prices, fetch_live_rates, import_candles, label, probe,
                   scrape_bodies)
 
 def as_date(s):
@@ -39,9 +39,11 @@ def main():
     b = sub.add_parser("bodies")
     b.add_argument("--limit", type=int, default=50)
     b.add_argument("--all", action="store_true", help="also irrelevant articles")
-    sub.add_parser("label")
+    lb = sub.add_parser("label")
+    lb.add_argument("--market", choices=["all", "dollar", "gold", "btc"], default="all")
     sub.add_parser("rescore")
     sub.add_parser("fake-prices")
+    sub.add_parser("prices", help="display live ticker rates for Dollar, Gold, and BTC")
     ic = sub.add_parser("import-candles")
     ic.add_argument("path")
     tp = sub.add_parser("top")
@@ -50,8 +52,10 @@ def main():
     tp.add_argument("--show-merges", action="store_true")
     pr = sub.add_parser("predict")
     pr.add_argument("--hours", type=float, default=24)
+    pr.add_argument("--market", choices=["all", "dollar", "gold", "btc"], default="all")
     bt = sub.add_parser("backtest")
     bt.add_argument("--horizon", type=int)
+    bt.add_argument("--market", choices=["all", "dollar", "gold", "btc"], default="all")
     ex = sub.add_parser("export")
     ex.add_argument("--show-merges", action="store_true")
     ui = sub.add_parser("ui")
@@ -75,8 +79,30 @@ def main():
         collect(db, cfg, d0, d1)
     elif a.cmd == "bodies":
         scrape_bodies(db, cfg, a.limit, a.all)
+    elif a.cmd == "prices":
+        r = fetch_live_rates()
+        print("=== Live Multi-Market Ticker ===")
+        if "dollar_free" in r:
+            p, ch = r["dollar_free"]["rial"], r["dollar_free"]["change"]
+            print(f"💵 Dollar Free Market: {p:,.0f} Rial ({p/10:,.0f} Toman)  [{ch:+.2f}%]")
+        if "usdt" in r:
+            p, ch = r["usdt"]["rial"], r["usdt"]["change"]
+            print(f"💵 Tether (USDT):     {p:,.0f} Rial ({p/10:,.0f} Toman)  [{ch:+.2f}%]")
+        if "gold_emami" in r:
+            p, ch = r["gold_emami"]["rial"], r["gold_emami"]["change"]
+            print(f"🥇 Gold Emami Coin:   {p:,.0f} Rial ({p/10:,.0f} Toman)  [{ch:+.2f}%]")
+        if "gold_18k" in r:
+            p, ch = r["gold_18k"]["rial"], r["gold_18k"]["change"]
+            print(f"🥇 Gold 18K (gram):   {p:,.0f} Rial ({p/10:,.0f} Toman)  [{ch:+.2f}%]")
+        if "paxg" in r:
+            p, ch = r["paxg"]["rial"], r["paxg"]["change"]
+            print(f"🥇 PAX Gold (Nobitex):{p:,.0f} Rial ({p/10:,.0f} Toman)  [{ch:+.2f}%]")
+        if "btc_rls" in r:
+            p, ch = r["btc_rls"]["rial"], r["btc_rls"]["change"]
+            usd = r.get("btc_usdt", {}).get("usd", 0)
+            print(f"₿  Bitcoin (Nobitex):  {p:,.0f} Rial (~{p/10000000000:,.2f}B Toman | ${usd:,.0f})  [{ch:+.2f}%]")
     elif a.cmd == "label":
-        label(db, cfg)
+        label(db, cfg, market_filter=getattr(a, "market", "all"))
     elif a.cmd == "rescore":
         rescore(db, cfg)
     elif a.cmd == "doctor":
@@ -88,9 +114,9 @@ def main():
     elif a.cmd == "top":
         top(db, cfg, a.hours, a.n, a.show_merges)
     elif a.cmd == "predict":
-        predict(db, cfg, a.hours)
+        predict(db, cfg, a.hours, market=getattr(a, "market", "all"))
     elif a.cmd == "backtest":
-        backtest(db, cfg, a.horizon)
+        backtest(db, cfg, a.horizon, market=getattr(a, "market", "all"))
     elif a.cmd == "export":
         export(db, cfg, a.show_merges)
     elif a.cmd == "update":

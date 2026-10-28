@@ -1,5 +1,9 @@
 {
-  "market": { "symbol": "FAKE", "resolution": "15", "fetch": false },
+  "market": {
+    "symbol": "BTCIRT",
+    "resolution": "15",
+    "fetch": true
+  },
   "horizons_hours": [
     1,
     6,
@@ -33,7 +37,11 @@
     },
     "BBC World": "http://feeds.bbci.co.uk/news/world/rss.xml",
     "Guardian": "https://www.theguardian.com/world/rss",
-    "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml"
+    "Al Jazeera": "https://www.aljazeera.com/xml/rss/all.xml",
+    "Tejarat News": {
+      "url": "https://tejaratnews.com/feed",
+      "iran_local": true
+    }
   },
   "date_feeds": {
     "GN rial dollar": "https://news.google.com/rss/search?q=Iran+rial+dollar+after:{after}+before:{before}&hl=en-US&gl=US&ceid=US:en",
@@ -185,18 +193,80 @@
     "boost_per_source": 0.05,
     "max_boost": 0.2
   },
-  "prices": {
-    "request": {
-      "url": "https://apiv2.nobitex.ir/market/stats?srcCurrency=btc&dstCurrency=usdt",
-      "method": "GET"
+  "markets": {
+    "dollar": {
+      "name": "US Dollar (دلار)",
+      "symbol": "USDTIRT",
+      "provider": "nobitex_implied",
+      "indicator": "price_dollar_rl",
+      "resolution": "15",
+      "unit": "Rial",
+      "keywords": [
+        "dollar",
+        "usd",
+        "rial",
+        "exchange rate",
+        "currency",
+        "forex",
+        "bonbast",
+        "دلار",
+        "ریال",
+        "صرافی",
+        "ارز"
+      ],
+      "daily_symbol": "USD_IRT"
     },
-    "file": "output/prices.csv",
-    "fields": {
-      "latest": "stats.btc-usdt.latest",
-      "best_buy": "stats.btc-usdt.bestBuy",
-      "best_sell": "stats.btc-usdt.bestSell",
-      "day_high": "stats.btc-usdt.dayHigh",
-      "day_low": "stats.btc-usdt.dayLow"
+    "gold": {
+      "name": "Gold & Coin (سکه و طلا)",
+      "symbol": "PAXGIRT",
+      "alt_symbol": "PAXGIRT",
+      "provider": "nobitex",
+      "indicator": "sekee",
+      "resolution": "15",
+      "unit": "Rial",
+      "keywords": [
+        "gold",
+        "coin",
+        "bahar azadi",
+        "sekkeh",
+        "طلا",
+        "سکه",
+        "امامی",
+        "بهار آزادی",
+        "mesghal",
+        "مثقال",
+        "گرمی",
+        "gerami",
+        "paxg"
+      ],
+      "daily_symbol": "GOLD_SEKEE"
+    },
+    "btc": {
+      "name": "Bitcoin (بیت کوین)",
+      "symbol": "BTCIRT",
+      "provider": "nobitex",
+      "resolution": "15",
+      "unit": "Toman",
+      "keywords": [
+        "bitcoin",
+        "btc",
+        "crypto",
+        "ethereum",
+        "cryptocurrency",
+        "stablecoin",
+        "tether",
+        "usdt",
+        "nobitex",
+        "binance",
+        "بیت کوین",
+        "بیت‌کوین",
+        "بیتکوین",
+        "تتر",
+        "رمزارز",
+        "ارز دیجیتال",
+        "نوبیتکس",
+        "کریپتو"
+      ]
     }
   }
 }
